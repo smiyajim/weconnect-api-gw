@@ -1,0 +1,14 @@
+0000000000000000000000000000000000000000 a21f5e6220375e1353f0392654e59bce6a05b5a7 miyajima <shinji.miyajima@we-grow.biz> 1768531119 +0900	clone: from https://github.com/smiyajim/weconnect-be.git
+a21f5e6220375e1353f0392654e59bce6a05b5a7 a21f5e6220375e1353f0392654e59bce6a05b5a7 miyajima <shinji.miyajima@we-grow.biz> 1768532027 +0900	checkout: moving from main to feature/replace_sql
+a21f5e6220375e1353f0392654e59bce6a05b5a7 4ff4236e5bdb70cba27d95734943133092dd0455 miyajima <shinji.miyajima@we-grow.biz> 1768535174 +0900	commit: revise SQL failes
+4ff4236e5bdb70cba27d95734943133092dd0455 9a89806b9ee7219d3239d252d30f32c11ecdcf0e miyajima <shinji.miyajima@we-grow.biz> 1768541254 +0900	commit: delete doc
+9a89806b9ee7219d3239d252d30f32c11ecdcf0e a21f5e6220375e1353f0392654e59bce6a05b5a7 miyajima <shinji.miyajima@we-grow.biz> 1768541640 +0900	checkout: moving from feature/replace_sql to main
+a21f5e6220375e1353f0392654e59bce6a05b5a7 516298de71f022f243f905658e4c9d0aaa129dbb miyajima <shinji.miyajima@we-grow.biz> 1768541957 +0900	pull origin main: Fast-forward
+516298de71f022f243f905658e4c9d0aaa129dbb 20d264a2226a941987af73e002045379fa57c75e miyajima <shinji.miyajima@we-grow.biz> 1771814503 +0900	commit: Initial commit: API-GW python code
+20d264a2226a941987af73e002045379fa57c75e 0000000000000000000000000000000000000000 miyajima <shinji.miyajima@we-grow.biz> 1771815048 +0900	Branch: renamed refs/heads/main to refs/heads/main
+20d264a2226a941987af73e002045379fa57c75e 20d264a2226a941987af73e002045379fa57c75e miyajima <shinji.miyajima@we-grow.biz> 1771815048 +0900	Branch: renamed refs/heads/main to refs/heads/main
+20d264a2226a941987af73e002045379fa57c75e 0c53a5d5a4800f9e1ddd916ec590e20a9ee97d1d miyajima <shinji.miyajima@we-grow.biz> 1771817012 +0900	rebase (start): checkout 0c53a5d5a4800f9e1ddd916ec590e20a9ee97d1d
+0c53a5d5a4800f9e1ddd916ec590e20a9ee97d1d a21f5e6220375e1353f0392654e59bce6a05b5a7 miyajima <shinji.miyajima@we-grow.biz> 1771817012 +0900	rebase: fast-forward
+a21f5e6220375e1353f0392654e59bce6a05b5a7 53aa1ef47d7c8acc470a0aa95527db42fa452cbf miyajima <shinji.miyajima@we-grow.biz> 1771817211 +0900	commit (amend): first commit
+53aa1ef47d7c8acc470a0aa95527db42fa452cbf 03d2d04c535c367d148e7d86a2cbd72c5444a27d miyajima <shinji.miyajima@we-grow.biz> 1771817220 +0900	rebase (edit): revise SQL failes
+03d2d04c535c367d148e7d86a2cbd72c5444a27d 20d264a2226a941987af73e002045379fa57c75e miyajima <shinji.miyajima@we-grow.biz> 1771817414 +0900	rebase (abort): returning to refs/heads/main

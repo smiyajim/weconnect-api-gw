@@ -1,0 +1,21 @@
+[project]
+name = "ai-gateway"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+  "fastapi",
+  "uvicorn",
+  "sqlalchemy",
+  "psycopg2-binary",
+  "httpx",
+  "python-dotenv",
+  "openai",
+  "pypdf>=6.5.0",
+  "python-multipart>=0.0.21",
+  "asyncpg>=0.31.0",
+  "pgvector>=0.4.2",
+]
+
+[tool.uv]
