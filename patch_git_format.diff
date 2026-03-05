@@ -1,5 +1,6 @@
---- app/embeddings/client.py.bak
-+++ app/embeddings/client.py
+diff --git a/app/embeddings/client.py b/app/embeddings/client.py
+--- a/app/embeddings/client.py
++++ b/app/embeddings/client.py
 @@ -1,20 +1,77 @@
  # app/embeddings/client.py
  
@@ -84,10 +85,9 @@
 +        model = SentenceTransformer(model_id)
 +        self._st_models[model_id] = model
 +        return model
-+
-+
---- app/ingest/repository.py.bak
-+++ app/ingest/repository.py
+diff --git a/app/ingest/repository.py b/app/ingest/repository.py
+--- a/app/ingest/repository.py
++++ b/app/ingest/repository.py
 @@ -1,31 +1,80 @@
  import uuid
  from typing import List, Dict, Any
@@ -173,10 +173,9 @@
  
      async with async_engine.begin() as conn:
          await conn.execute(sql, rows)
-
-
---- app/ingest/ingest_text.py.bak
-+++ app/ingest/ingest_text.py
+diff --git a/app/ingest/ingest_text.py b/app/ingest/ingest_text.py
+--- a/app/ingest/ingest_text.py
++++ b/app/ingest/ingest_text.py
 @@ -1,14 +1,16 @@
  # app/ingest/ingest_text.py
  
@@ -248,10 +247,9 @@
 +        embeddings_sbert_ja=embeddings_ja,
          metas=metas,
      )
-
-
---- app/rag_clients/pgvector_rag.py.bak
-+++ app/rag_clients/pgvector_rag.py
+diff --git a/app/rag_clients/pgvector_rag.py b/app/rag_clients/pgvector_rag.py
+--- a/app/rag_clients/pgvector_rag.py
++++ b/app/rag_clients/pgvector_rag.py
 @@ -1,12 +1,42 @@
  # app/rag_clients/pgvector_rag.py
  
@@ -281,7 +279,6 @@
 +
  class PgVectorRAG(BaseRAG):
 +    def _get_customer_id(self) -> str:
-+        # BaseRAG の実装差を吸収（tenant_id / customer_id のどちらでも拾う）
 +        cid = getattr(self, "tenant_id", None) or getattr(self, "customer_id", None)
 +        if not cid:
 +            raise RuntimeError("Cannot determine tenant/customer id on PgVectorRAG instance.")
@@ -335,7 +332,6 @@
 +        *,
 +        persist_to_evaldb: bool = True,
 +    ) -> Dict[str, List[Dict[str, Any]]]:
-+        """Run the same query context against all 4 embedding models."""
 +        model_keys: list[EmbeddingModelKey] = [
 +            "openai",
 +            "para_multi",
@@ -366,50 +362,9 @@
 +            )
 +
 +        return results_by_model
-
-
---- app/agent/tool_executor.py.bak
-+++ app/agent/tool_executor.py
-@@ -1,5 +1,6 @@
- # app/agent/tool_executor.py
- 
-+from typing import Any, Dict
- ...
- 
-     if name == "rag_search":
-         query = args["query"]
-         top_k = args.get("top_k", 5)
-         filter_metadata = args.get("metadata")
- 
-+        # 追加: 4モデルで自動評価するオプション
-+        eval_all_models = bool(args.get("eval_all_models", False))
-+        persist_to_evaldb = bool(args.get("persist_to_evaldb", True))
-+
-         rag = await resolve_rag_client(tenant_id)
- 
--        result = await rag.search(query=query, top_k=top_k, filter_metadata=filter_metadata)
-+        if eval_all_models:
-+            result = await rag.search_eval_all_models(
-+                query=query,
-+                top_k=top_k,
-+                filter_metadata=filter_metadata,
-+                persist_to_evaldb=persist_to_evaldb,
-+            )
-+        else:
-+            result = await rag.search(
-+                query=query,
-+                top_k=top_k,
-+                filter_metadata=filter_metadata,
-+            )
- 
-         return {
-             "tool_name": name,
-             "result": result,
-         }
-
-
+diff --git a/app/db/eval_async_session.py b/app/db/eval_async_session.py
 --- /dev/null
-+++ app/db/eval_async_session.py
++++ b/app/db/eval_async_session.py
 @@ -0,0 +1,21 @@
 +# app/db/eval_async_session.py
 +import os
@@ -429,16 +384,14 @@
 +    bind=eval_async_engine,
 +    expire_on_commit=False,
 +)
-
-
+diff --git a/app/evaldb/__init__.py b/app/evaldb/__init__.py
 --- /dev/null
-+++ app/evaldb/__init__.py
++++ b/app/evaldb/__init__.py
 @@ -0,0 +1 @@
 +# app/evaldb/__init__.py
-
-
+diff --git a/app/evaldb/repository.py b/app/evaldb/repository.py
 --- /dev/null
-+++ app/evaldb/repository.py
++++ b/app/evaldb/repository.py
 @@ -0,0 +1,56 @@
 +# app/evaldb/repository.py
 +import uuid
@@ -489,22 +442,11 @@
 +        await conn.execute(sql_result, result_rows)
 +
 +    return run_id
-
-
+diff --git a/app/scripts/backfill_embeddings_768.py b/app/scripts/backfill_embeddings_768.py
 --- /dev/null
-+++ app/scripts/backfill_embeddings_768.py
++++ b/app/scripts/backfill_embeddings_768.py
 @@ -0,0 +1,208 @@
 +# app/scripts/backfill_embeddings_768.py
-+#
-+# One-shot backfill script:
-+# - Fill documents.embedding_para_multi / embedding_all_mpnet / embedding_sbert_ja
-+# - Keep embedding_openai (1536) untouched
-+#
-+# Usage examples:
-+#   python -m app.scripts.backfill_embeddings_768 --batch-size 128
-+#   python -m app.scripts.backfill_embeddings_768 --customer-id <TENANT_ID> --batch-size 64
-+#   python -m app.scripts.backfill_embeddings_768 --dry-run
-+#
 +import argparse
 +import asyncio
 +import logging
@@ -534,7 +476,6 @@
 +        where += " AND customer_id = :customer_id"
 +        params["customer_id"] = customer_id
 +
-+    # Keyset pagination using id to avoid OFFSET on big tables
 +    sql = f"""
 +      SELECT id, content,
 +             embedding_para_multi IS NULL AS need_para,
