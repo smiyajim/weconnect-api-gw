@@ -145,10 +145,23 @@ uv run uvicorn mcp_server.server:app --host 0.0.0.0 --port 9000 --reload
         CREATE DATABASE ragdb;
 
     # 2. 構造を流す
-    psql -U noah ragdb < db/schema.sql
+    psql -U noah ragdb < db/ragdb_schema.sql
 
     # 3. 初期データを流す
-    psql -U noah ragdb < db/seed.sql
+    psql -U noah ragdb < db/ragdb_seed.sql
+
+    # 4. embeddingモデル評価用スーマー変更データを流す
+    psql -U noah ragdb < db/ragdb_schema_update.sql
+
+### Eval DB 再作成
+    # 1. DBを再作成
+    psql -U noah -d evaldb
+        \c postgres
+        DROP DATABASE evaldb;
+        CREATE DATABASE evaldb;
+
+    # 2. 構造を流す
+    psql -U noah evaldb < db/evaldb_schema.sql
 
 ### LOG DB 再作成
     # 1. DBを再作成

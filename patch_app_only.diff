@@ -1,0 +1,652 @@
+--- app/embeddings/client.py.bak
++++ app/embeddings/client.py
+@@ -1,20 +1,77 @@
+ # app/embeddings/client.py
+ 
+ import os
++import asyncio
++from typing import Literal
+ 
+ from openai import AsyncOpenAI
+ 
+-EMBEDDING_MODEL = os.getenv(
+-    "OPENAI_EMBEDDING_MODEL",
+-    "text-embedding-3-small"  # 1536次元
+-)
++# NOTE:
++# - OpenAI embeddings: async API
++# - sentence-transformers: sync encode() -> run in a thread to avoid blocking
++
++EmbeddingModelKey = Literal[
++    "openai",
++    "para_multi",
++    "all_mpnet",
++    "sbert_ja",
++]
++
++OPENAI_EMBEDDING_MODEL = os.getenv(
++    "OPENAI_EMBEDDING_MODEL",
++    "text-embedding-3-small",  # default 1536 dims
++)
++
++# Hugging Face model ids (sentence-transformers)
++ST_MODEL_ID_MAP: dict[EmbeddingModelKey, str] = {
++    "para_multi": "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
++    "all_mpnet": "sentence-transformers/all-mpnet-base-v2",
++    "sbert_ja": "colorfulscoop/sbert-base-ja",
++    # "openai" is handled separately
++}
+ 
+ class EmbeddingClient:
+     def __init__(self):
+-        self.client = AsyncOpenAI()
++        self._openai = AsyncOpenAI()
++        self._st_models: dict[str, object] = {}
+ 
+-    async def embed(self, texts: list[str]) -> list[list[float]]:
+-        response = await self.client.embeddings.create(
+-            model=EMBEDDING_MODEL,
+-            input=texts,
+-        )
+-        return [d.embedding for d in response.data]
++    async def embed(self, texts: list[str], model_key: EmbeddingModelKey = "openai") -> list[list[float]]:
++        """Return embeddings for texts.
++
++        model_key:
++          - openai: OpenAI embeddings
++          - para_multi / all_mpnet / sbert_ja: sentence-transformers
++        """
++        if model_key == "openai":
++            response = await self._openai.embeddings.create(
++                model=OPENAI_EMBEDDING_MODEL,
++                input=texts,
++            )
++            return [d.embedding for d in response.data]
++
++        model_id = ST_MODEL_ID_MAP[model_key]
++        model = self._get_or_load_st_model(model_id)
++
++        # encode() is sync -> run in thread
++        embeddings = await asyncio.to_thread(
++            model.encode,
++            texts,
++            normalize_embeddings=True,
++        )
++        return embeddings.tolist()
++
++    def _get_or_load_st_model(self, model_id: str):
++        model = self._st_models.get(model_id)
++        if model is not None:
++            return model
++
++        from sentence_transformers import SentenceTransformer
++
++        model = SentenceTransformer(model_id)
++        self._st_models[model_id] = model
++        return model
+
+
+--- app/ingest/repository.py.bak
++++ app/ingest/repository.py
+@@ -1,31 +1,80 @@
+ import uuid
+ from typing import List, Dict, Any
+ from sqlalchemy import text
+ from app.db.async_session import async_engine
+ import json
+ 
+ async def insert_documents_bulk(
+     customer_id: str,
+     contents: List[str],
+-    embeddings: List[List[float]],
+-    metas: List[Dict[str, Any]] = None, # [改修点] メタデータのリストを追加
++    *,
++    embeddings_openai: List[List[float]],
++    embeddings_para_multi: List[List[float]],
++    embeddings_all_mpnet: List[List[float]],
++    embeddings_sbert_ja: List[List[float]],
++    metas: List[Dict[str, Any]] = None,  # [改修点] メタデータのリストを追加
+ ):
+-    assert len(contents) == len(embeddings)
++    """Insert documents with 4 embedding columns in one table."""
++
++    n = len(contents)
++    assert n == len(embeddings_openai)
++    assert n == len(embeddings_para_multi)
++    assert n == len(embeddings_all_mpnet)
++    assert n == len(embeddings_sbert_ja)
+     if metas is None:
+-        metas = [None] * len(contents)
++        metas = [None] * n
+ 
++    def _vec_str(vec: List[float]) -> str:
++        return "[" + ",".join(f"{v:.6f}" for v in vec) + "]"
++
+     rows = [
+         {
+             "id": uuid.uuid4(),
+             "customer_id": customer_id,
+             "content": content,
+-            "embedding": "[" + ",".join(f"{v:.6f}" for v in embedding) + "]",
+-            "meta": json.dumps(meta) if meta else None, # [改修点] JSON文字列として渡す
++            "embedding_openai": _vec_str(e_openai),
++            "embedding_para_multi": _vec_str(e_para),
++            "embedding_all_mpnet": _vec_str(e_all),
++            "embedding_sbert_ja": _vec_str(e_ja),
++            "meta": json.dumps(meta) if meta else None,  # JSON文字列として渡す
+         }
+-        for content, embedding, meta in zip(contents, embeddings, metas)
++        for content, e_openai, e_para, e_all, e_ja, meta in zip(
++            contents,
++            embeddings_openai,
++            embeddings_para_multi,
++            embeddings_all_mpnet,
++            embeddings_sbert_ja,
++            metas,
++        )
+     ]
+ 
+     sql = text("""
+-        INSERT INTO documents (id, customer_id, content, embedding, meta)
+-        VALUES (:id, :customer_id, :content, CAST(:embedding AS vector), CAST(:meta AS jsonb))
++        INSERT INTO documents (
++            id,
++            customer_id,
++            content,
++            embedding_openai,
++            embedding_para_multi,
++            embedding_all_mpnet,
++            embedding_sbert_ja,
++            meta
++        )
++        VALUES (
++            :id,
++            :customer_id,
++            :content,
++            CAST(:embedding_openai AS vector),
++            CAST(:embedding_para_multi AS vector),
++            CAST(:embedding_all_mpnet AS vector),
++            CAST(:embedding_sbert_ja AS vector),
++            CAST(:meta AS jsonb)
++        )
+     """)
+ 
+     async with async_engine.begin() as conn:
+         await conn.execute(sql, rows)
+
+
+--- app/ingest/ingest_text.py.bak
++++ app/ingest/ingest_text.py
+@@ -1,14 +1,16 @@
+ # app/ingest/ingest_text.py
+ 
++import asyncio
+ import logging
+ 
+ from app.ingest.chunker import chunk_text
+ from app.ingest.normalize import normalize_text
+ from app.embeddings import get_embedding_client
+ from app.ingest.repository import insert_documents_bulk
+ from app.ingest.text_normalizer import normalize_japanese_text
+ 
+ logger = logging.getLogger(__name__)
+ 
+ async def ingest_text(
+     tenant_id: str,
+@@ -34,12 +36,6 @@
+     # ------------------------------------------------------------------
+     chunks = chunk_text(normalized_text)
+ 
+-    print("DEBUG chunk structures:")    # DEBUG
+-    for c in chunks[:5]:                # DEBUG
+-        print(c["structure"])           # DEBUG
+-
+     contents = []
+     metas = []
+@@ -50,8 +46,6 @@
+         body = chunk.get("text")
+         structure = chunk.get("structure", {})
+ 
+-        print("DEBUG meta.structure:", structure)   # DEBUG
+-
+         if not body:
+             continue
+@@ -75,20 +69,36 @@
+     if not contents:
+         logger.warning("No valid contents for embedding, skip ingest")
+         return
+ 
+     # ------------------------------------------------------------------
+-    # ⑥ embedding
++    # ⑥ embedding (4 models)
+     # ------------------------------------------------------------------
+     embedding_client = get_embedding_client()
+-    embeddings = await embedding_client.embed(contents)
++    emb_openai_task = embedding_client.embed(contents, model_key="openai")
++    emb_para_task = embedding_client.embed(contents, model_key="para_multi")
++    emb_all_task = embedding_client.embed(contents, model_key="all_mpnet")
++    emb_ja_task = embedding_client.embed(contents, model_key="sbert_ja")
++
++    embeddings_openai, embeddings_para, embeddings_all, embeddings_ja = await asyncio.gather(
++        emb_openai_task,
++        emb_para_task,
++        emb_all_task,
++        emb_ja_task,
++    )
+ 
+     # ------------------------------------------------------------------
+-    # ⑦ DB insert
++    # ⑦ DB insert (single table, 4 embedding columns)
+     # ------------------------------------------------------------------
+     await insert_documents_bulk(
+         customer_id=tenant_id,
+         contents=contents,
+-        embeddings=embeddings,
++        embeddings_openai=embeddings_openai,
++        embeddings_para_multi=embeddings_para,
++        embeddings_all_mpnet=embeddings_all,
++        embeddings_sbert_ja=embeddings_ja,
+         metas=metas,
+     )
+
+
+--- app/rag_clients/pgvector_rag.py.bak
++++ app/rag_clients/pgvector_rag.py
+@@ -1,12 +1,42 @@
+ # app/rag_clients/pgvector_rag.py
+ 
+-from typing import List, Dict, Any
++from typing import List, Dict, Any, Literal
++import asyncio
+ from sqlalchemy import text
+ from app.embeddings import get_embedding_client
+ from app.rag_clients.base import BaseRAG
+ from app.db.rag_async_session import rag_async_engine
++from app.evaldb.repository import insert_embedding_eval_run
+ import json
+ 
++EmbeddingModelKey = Literal[
++    "openai",
++    "para_multi",
++    "all_mpnet",
++    "sbert_ja",
++]
++
++EMBEDDING_COL_MAP: dict[EmbeddingModelKey, str] = {
++    "openai": "embedding_openai",
++    "para_multi": "embedding_para_multi",
++    "all_mpnet": "embedding_all_mpnet",
++    "sbert_ja": "embedding_sbert_ja",
++}
++
+ class PgVectorRAG(BaseRAG):
++    def _get_customer_id(self) -> str:
++        # BaseRAG の実装差を吸収（tenant_id / customer_id のどちらでも拾う）
++        cid = getattr(self, "tenant_id", None) or getattr(self, "customer_id", None)
++        if not cid:
++            raise RuntimeError("Cannot determine tenant/customer id on PgVectorRAG instance.")
++        return str(cid)
++
+     async def search(
+         self,
+         query: str,
+         top_k: int = 5,
+         filter_metadata: Dict[str, Any] = None,
+         *,
+-        model_key: str = "openai",
++        model_key: EmbeddingModelKey = "openai",
+     ) -> List[Dict[str, Any]]:
+ 
+         # ① embedding
+         embedding_client = get_embedding_client()
+-        query_embedding = (await embedding_client.embed([query]))[0]
++        query_embedding = (await embedding_client.embed([query], model_key=model_key))[0]
+ 
+         # ② where clause（既存仕様に合わせて meta フィルタを作る想定）
+         where_clause = ""
+         params = {"query_embedding": "[" + ",".join(f"{v:.6f}" for v in query_embedding) + "]", "top_k": top_k}
+@@ -18,13 +48,15 @@
+             where_clause = "WHERE meta @> CAST(:filter_meta AS jsonb)"
+             params["filter_meta"] = json.dumps(filter_metadata)
+ 
++        col = EMBEDDING_COL_MAP[model_key]
++
+         # ③ search
+         sql = text(f"""
+             SELECT content, meta
+             FROM documents
+             {where_clause}
+-            ORDER BY embedding <-> CAST(:query_embedding AS vector)
++            ORDER BY {col} <-> CAST(:query_embedding AS vector)
+             LIMIT :top_k
+         """)
+ 
+@@ -33,5 +65,55 @@
+             result = await conn.execute(sql, params)
+             rows = result.fetchall()
+ 
+         return [{"doc": row[0], "meta": row[1]} for row in rows]
++
++    async def search_eval_all_models(
++        self,
++        query: str,
++        top_k: int = 5,
++        filter_metadata: Dict[str, Any] = None,
++        *,
++        persist_to_evaldb: bool = True,
++    ) -> Dict[str, List[Dict[str, Any]]]:
++        """Run the same query context against all 4 embedding models."""
++        model_keys: list[EmbeddingModelKey] = [
++            "openai",
++            "para_multi",
++            "all_mpnet",
++            "sbert_ja",
++        ]
++        tasks = [
++            self.search(
++                query=query,
++                top_k=top_k,
++                filter_metadata=filter_metadata,
++                model_key=mk,
++            )
++            for mk in model_keys
++        ]
++        results_list = await asyncio.gather(*tasks)
++        results_by_model: Dict[str, List[Dict[str, Any]]] = {
++            mk: res for mk, res in zip(model_keys, results_list)
++        }
++
++        if persist_to_evaldb:
++            await insert_embedding_eval_run(
++                customer_id=self._get_customer_id(),
++                query=query,
++                top_k=top_k,
++                filter_metadata=filter_metadata,
++                results_by_model=results_by_model,
++            )
++
++        return results_by_model
+
+
+--- app/agent/tool_executor.py.bak
++++ app/agent/tool_executor.py
+@@ -1,5 +1,6 @@
+ # app/agent/tool_executor.py
+ 
++from typing import Any, Dict
+ ...
+ 
+     if name == "rag_search":
+         query = args["query"]
+         top_k = args.get("top_k", 5)
+         filter_metadata = args.get("metadata")
+ 
++        # 追加: 4モデルで自動評価するオプション
++        eval_all_models = bool(args.get("eval_all_models", False))
++        persist_to_evaldb = bool(args.get("persist_to_evaldb", True))
++
+         rag = await resolve_rag_client(tenant_id)
+ 
+-        result = await rag.search(query=query, top_k=top_k, filter_metadata=filter_metadata)
++        if eval_all_models:
++            result = await rag.search_eval_all_models(
++                query=query,
++                top_k=top_k,
++                filter_metadata=filter_metadata,
++                persist_to_evaldb=persist_to_evaldb,
++            )
++        else:
++            result = await rag.search(
++                query=query,
++                top_k=top_k,
++                filter_metadata=filter_metadata,
++            )
+ 
+         return {
+             "tool_name": name,
+             "result": result,
+         }
+
+
+--- /dev/null
++++ app/db/eval_async_session.py
+@@ -0,0 +1,21 @@
++# app/db/eval_async_session.py
++import os
++from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
++
++EVAL_DATABASE_URL = os.environ["EVAL_DATABASE_URL"]
++
++eval_async_engine = create_async_engine(
++    EVAL_DATABASE_URL,
++    pool_size=5,
++    max_overflow=10,
++    pool_pre_ping=True,
++    echo=False,
++)
++
++EvalAsyncSessionLocal = async_sessionmaker(
++    bind=eval_async_engine,
++    expire_on_commit=False,
++)
+
+
+--- /dev/null
++++ app/evaldb/__init__.py
+@@ -0,0 +1 @@
++# app/evaldb/__init__.py
+
+
+--- /dev/null
++++ app/evaldb/repository.py
+@@ -0,0 +1,56 @@
++# app/evaldb/repository.py
++import uuid
++import json
++from typing import Any, Dict
++from sqlalchemy import text
++from app.db.eval_async_session import eval_async_engine
++
++
++async def insert_embedding_eval_run(
++    *,
++    customer_id: str,
++    query: str,
++    top_k: int,
++    filter_metadata: Dict[str, Any] | None,
++    results_by_model: Dict[str, Any],
++) -> uuid.UUID:
++    run_id = uuid.uuid4()
++    run_row = {
++        "id": run_id,
++        "customer_id": customer_id,
++        "query": query,
++        "top_k": top_k,
++        "filter_meta": json.dumps(filter_metadata) if filter_metadata else None,
++    }
++    result_rows = [
++        {
++            "id": uuid.uuid4(),
++            "run_id": run_id,
++            "model_key": model_key,
++            "results": json.dumps(model_results),
++        }
++        for model_key, model_results in results_by_model.items()
++    ]
++
++    sql_run = text("""
++        INSERT INTO embedding_eval_runs (id, customer_id, query, top_k, filter_meta)
++        VALUES (:id, :customer_id, :query, :top_k, CAST(:filter_meta AS jsonb))
++    """)
++
++    sql_result = text("""
++        INSERT INTO embedding_eval_results (id, run_id, model_key, results)
++        VALUES (:id, :run_id, :model_key, CAST(:results AS jsonb))
++    """)
++
++    async with eval_async_engine.begin() as conn:
++        await conn.execute(sql_run, run_row)
++        await conn.execute(sql_result, result_rows)
++
++    return run_id
+
+
+--- /dev/null
++++ app/scripts/backfill_embeddings_768.py
+@@ -0,0 +1,208 @@
++# app/scripts/backfill_embeddings_768.py
++#
++# One-shot backfill script:
++# - Fill documents.embedding_para_multi / embedding_all_mpnet / embedding_sbert_ja
++# - Keep embedding_openai (1536) untouched
++#
++# Usage examples:
++#   python -m app.scripts.backfill_embeddings_768 --batch-size 128
++#   python -m app.scripts.backfill_embeddings_768 --customer-id <TENANT_ID> --batch-size 64
++#   python -m app.scripts.backfill_embeddings_768 --dry-run
++#
++import argparse
++import asyncio
++import logging
++import time
++from typing import Any, Dict, List, Optional, Tuple
++
++from sqlalchemy import text
++
++from app.db.rag_async_session import rag_async_engine
++from app.embeddings import get_embedding_client
++
++logger = logging.getLogger("backfill_embeddings_768")
++
++
++def _vec_str(vec: List[float]) -> str:
++    return "[" + ",".join(f"{v:.6f}" for v in vec) + "]"
++
++
++def _build_select_sql(customer_id: Optional[str]) -> Tuple[str, Dict[str, Any]]:
++    where = """
++      (embedding_para_multi IS NULL
++       OR embedding_all_mpnet IS NULL
++       OR embedding_sbert_ja IS NULL)
++    """
++    params: Dict[str, Any] = {}
++    if customer_id:
++        where += " AND customer_id = :customer_id"
++        params["customer_id"] = customer_id
++
++    # Keyset pagination using id to avoid OFFSET on big tables
++    sql = f"""
++      SELECT id, content,
++             embedding_para_multi IS NULL AS need_para,
++             embedding_all_mpnet IS NULL AS need_all,
++             embedding_sbert_ja IS NULL AS need_ja
++      FROM documents
++      WHERE {where}
++        AND (:after_id IS NULL OR id > :after_id)
++      ORDER BY id
++      LIMIT :limit
++    """
++    return sql, params
++
++
++def _build_update_sql() -> str:
++    return """
++      UPDATE documents
++      SET
++        embedding_para_multi = COALESCE(CAST(:embedding_para_multi AS vector), embedding_para_multi),
++        embedding_all_mpnet  = COALESCE(CAST(:embedding_all_mpnet  AS vector), embedding_all_mpnet),
++        embedding_sbert_ja   = COALESCE(CAST(:embedding_sbert_ja   AS vector), embedding_sbert_ja)
++      WHERE id = :id
++    """
++
++
++async def _fetch_batch(
++    customer_id: Optional[str],
++    after_id: Optional[str],
++    limit: int,
++) -> List[Dict[str, Any]]:
++    select_sql, params = _build_select_sql(customer_id)
++    params = dict(params)
++    params["after_id"] = after_id
++    params["limit"] = limit
++
++    async with rag_async_engine.connect() as conn:
++        result = await conn.execute(text(select_sql), params)
++        rows = result.mappings().all()
++        return [dict(r) for r in rows]
++
++
++async def _update_batch(rows: List[Dict[str, Any]], dry_run: bool) -> int:
++    if dry_run:
++        return len(rows)
++
++    update_sql = _build_update_sql()
++    async with rag_async_engine.begin() as conn:
++        await conn.execute(text(update_sql), rows)
++    return len(rows)
++
++
++async def main():
++    parser = argparse.ArgumentParser(description="Backfill 768-dim embedding columns for documents.")
++    parser.add_argument("--customer-id", default=None, help="Optional tenant/customer_id to restrict.")
++    parser.add_argument("--batch-size", type=int, default=128, help="Batch size (default: 128).")
++    parser.add_argument("--max-batches", type=int, default=0, help="Stop after N batches (0 = no limit).")
++    parser.add_argument("--dry-run", action="store_true", help="Compute counts only (no DB updates).")
++    parser.add_argument("--log-level", default="INFO", help="Logging level (default: INFO).")
++    args = parser.parse_args()
++
++    logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
++
++    embedding_client = get_embedding_client()
++
++    after_id: Optional[str] = None
++    batch_no = 0
++    total_updated = 0
++
++    t0 = time.time()
++    logger.info("Starting backfill. customer_id=%s batch_size=%d dry_run=%s",
++                args.customer_id, args.batch_size, args.dry_run)
++
++    while True:
++        if args.max_batches and batch_no >= args.max_batches:
++            logger.info("Reached max_batches=%d. Stopping.", args.max_batches)
++            break
++
++        batch = await _fetch_batch(args.customer_id, after_id, args.batch_size)
++        if not batch:
++            break
++
++        batch_no += 1
++        after_id = str(batch[-1]["id"])
++
++        contents = [r["content"] for r in batch]
++
++        emb_para_task = embedding_client.embed(contents, model_key="para_multi")
++        emb_all_task = embedding_client.embed(contents, model_key="all_mpnet")
++        emb_ja_task = embedding_client.embed(contents, model_key="sbert_ja")
++
++        emb_para, emb_all, emb_ja = await asyncio.gather(emb_para_task, emb_all_task, emb_ja_task)
++
++        update_rows: List[Dict[str, Any]] = []
++        for i, row in enumerate(batch):
++            update_rows.append({
++                "id": row["id"],
++                "embedding_para_multi": _vec_str(emb_para[i]) if row["need_para"] else None,
++                "embedding_all_mpnet": _vec_str(emb_all[i]) if row["need_all"] else None,
++                "embedding_sbert_ja": _vec_str(emb_ja[i]) if row["need_ja"] else None,
++            })
++
++        updated = await _update_batch(update_rows, args.dry_run)
++        total_updated += updated
++
++        elapsed = time.time() - t0
++        logger.info("Batch %d: rows=%d total=%d elapsed=%.1fs after_id=%s",
++                    batch_no, updated, total_updated, elapsed, after_id)
++
++    elapsed = time.time() - t0
++    logger.info("Done. batches=%d total_rows=%d elapsed=%.1fs dry_run=%s",
++                batch_no, total_updated, elapsed, args.dry_run)
++
++
++if __name__ == "__main__":
++    asyncio.run(main())
