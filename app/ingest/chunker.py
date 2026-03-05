@@ -67,16 +67,22 @@ def _looks_like_structured_doc(text: str) -> bool:
 # Chunk strategies
 # =========================
 def _chunk_by_article(text: str) -> List[Dict[str, Any]]:
-    """
-    第◯条 単位で分割（次の第◯条までを本文とする）
-    """
-    pattern = re.compile(
-        r"(第\s*[0-9０-９一二三四五六七八九十]+\s*条)"
-    )
-
+    pattern = re.compile(r"(第\s*[0-9０-９一二三四五六七八九十]+\s*条)")
     matches = list(pattern.finditer(text))
-    chunks = []
 
+    # ★追加：条が無いページは paragraph で返す（続きページ救済）
+    if not matches:
+        body = text.strip()
+        if body:
+            return [_build_chunk(
+                title="本文",
+                body=body,
+                structure_type="paragraph",
+                index=None,
+            )]
+        return []
+
+    chunks = []
     for i, m in enumerate(matches):
         start = m.end()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)

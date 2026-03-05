@@ -1,5 +1,6 @@
 # app/ingest/ingest_text.py
 
+import asyncio
 from app.ingest.chunker import chunk_text
 from app.ingest.normalize import normalize_text
 from app.embeddings import get_embedding_client
@@ -92,14 +93,36 @@ async def ingest_text(
     # ⑥ embedding
     # ------------------------------------------------------------------
     embedding_client = get_embedding_client()
-    embeddings = await embedding_client.embed(contents)
+    # embeddings = await embedding_client.embed(contents)
+
+    emb_openai_task = embedding_client.embed(contents, model_key="openai")
+    emb_para_task   = embedding_client.embed(contents, model_key="para_multi")
+    emb_all_task    = embedding_client.embed(contents, model_key="all_mpnet")
+    emb_ja_task     = embedding_client.embed(contents, model_key="sbert_ja")
+
+    embeddings_openai, embeddings_para, embeddings_all, embeddings_ja = await asyncio.gather(
+        emb_openai_task,
+        emb_para_task,
+        emb_all_task,
+        emb_ja_task,
+    )
 
     # ------------------------------------------------------------------
     # ⑦ DB insert
     # ------------------------------------------------------------------
+    #await insert_documents_bulk(
+    #    customer_id=tenant_id,
+    #    contents=contents,
+    #    embeddings=embeddings,
+    #    metas=metas,
+    #)
+
     await insert_documents_bulk(
         customer_id=tenant_id,
         contents=contents,
-        embeddings=embeddings,
+        embeddings_openai=embeddings_openai,
+        embeddings_para_multi=embeddings_para,
+        embeddings_all_mpnet=embeddings_all,
+        embeddings_sbert_ja=embeddings_ja,
         metas=metas,
     )

@@ -84,22 +84,27 @@ sudo firewall-cmd --reload
 sudo firewall-cmd --list-ports
 
 ### プロセス起動
-uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-uv run uvicorn mcp_server.server:app --host 0.0.0.0 --port 9000 --reload
+# uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+# uv run uvicorn mcp_server.server:app --host 0.0.0.0 --port 9000 --reload
+
+uv run python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+uv run python -m uvicorn mcp_server.server:app --host 0.0.0.0 --port 9000 --reload
 
         ※ 本番では「--reload」を抜く
 
 ### curlコマンド(ローカル試験用)
 
     ### PDF Upload（RAG-DB書き込み試験）
-    curl -X POST http://weconnect.srv.wegrow:8000/upload/pdf \
+    # curl -X POST http://weconnect.srv.wegrow:8000/upload/pdf \
+    curl -X POST http://172.16.30.70:8000/upload/pdf \
     -H "X-User-Id: demo-user" \
     -H "X-Tenant-Id: default" \
     -H "X-Internal-Gateway-Token: ＜環境変数登録したInternal-Gateway-Token＞" \
     -F "file=@社員就業規則.pdf" | jq
 
     ### Query（チャット試験）
-    curl -X POST http://weconnect.srv.wegrow:8000/chat \
+    # curl -X POST http://weconnect.srv.wegrow:8000/chat \
+    curl -X POST http://172.16.30.70:8000/chat \
     -H "Authorization: Bearer demo-user-token" \
     -H "X-User-Id: demo-user" \
     -H "X-Tenant-Id: default" \
@@ -260,7 +265,10 @@ uv run uvicorn mcp_server.server:app --host 0.0.0.0 --port 9000 --reload
     OPENAI_MODEL=gpt-4.1-mini
     LLM_PROVIDER=openai
     OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+    EVAL_DATABASE_URL=postgresql+asyncpg://noah:noahpee@localhost/evaldb
     MCP_SERVER_URL=http://localhost:9000
     OLDPWD=/home/smiyajim/python-pj/uv-pj/ai-gateway-step4
     INTERNAL_GATEWAY_TOKEN=《Internal-Gateway-Token情報》
+    EVAL_ALL_MODELS=1
+    EVAL_PERSIST_DB=1
 
