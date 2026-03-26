@@ -16,20 +16,18 @@ async def insert_embedding_eval_run_strict(
     filter_meta: dict | None,
     results_by_model: dict,
 ) -> uuid.UUID:
-    """
-    失敗したら例外を投げる（= 評価版向けに100%入れる）
-    """
+
     run_id = uuid.uuid4()
 
-    sql_run = """
+    sql_run = text("""
     INSERT INTO embedding_eval_runs (id, customer_id, query, top_k, filter_meta, created_at)
     VALUES (:id, :customer_id, :query, :top_k, CAST(:filter_meta AS jsonb), :created_at)
-    """
+    """)
 
-    sql_result = """
+    sql_result = text("""
     INSERT INTO embedding_eval_results (id, run_id, model_key, results, created_at)
     VALUES (:id, :run_id, :model_key, CAST(:results AS jsonb), :created_at)
-    """
+    """)
 
     now = datetime.utcnow()
 
@@ -38,7 +36,7 @@ async def insert_embedding_eval_run_strict(
         "customer_id": customer_id,
         "query": query,
         "top_k": int(top_k),
-        "filter_meta": json.dumps(filter_meta or {}),
+        "filter_meta": json.dumps(filter_meta or {}, ensure_ascii=False),
         "created_at": now,
     }
 

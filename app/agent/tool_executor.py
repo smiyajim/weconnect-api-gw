@@ -11,7 +11,8 @@ from app.tenant.resolver import resolve_rag_client
 
 logger = logging.getLogger(__name__)
 
-TOOL_TIMEOUT_SECONDS = 10  # 本番必須
+TOOL_TIMEOUT_SECONDS = 60  # 開発は長めに、本番は短めに（本番では10秒程度が望ましいが、開発中は色々試すため長めに設定）
+# TOOL_TIMEOUT_SECONDS = 10  # 本番必須
 
 
 def _env_flag(name: str, default: str = "0") -> bool:
