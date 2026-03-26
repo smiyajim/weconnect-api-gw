@@ -107,7 +107,8 @@ class PgVectorRAG(BaseRAG):
         #    )
         if persist_to_evaldb:
             await insert_embedding_eval_run_strict(
-                customer_id=self.customer_id,
+                # customer_id=self.customer_id,
+                customer_id=self.tenant_id,
                 query=query,
                 top_k=top_k,
                 filter_meta=filter_metadata,

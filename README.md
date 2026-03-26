@@ -96,7 +96,7 @@ uv run python -m uvicorn mcp_server.server:app --host 0.0.0.0 --port 9000 --relo
 
     ### PDF Upload（RAG-DB書き込み試験）
     # curl -X POST http://weconnect.srv.wegrow:8000/upload/pdf \
-    curl -X POST http://172.16.30.70:8000/upload/pdf \
+    curl -X POST http://192.168.3.70:8000/upload/pdf \
     -H "X-User-Id: demo-user" \
     -H "X-Tenant-Id: default" \
     -H "X-Internal-Gateway-Token: ＜環境変数登録したInternal-Gateway-Token＞" \
@@ -104,7 +104,7 @@ uv run python -m uvicorn mcp_server.server:app --host 0.0.0.0 --port 9000 --relo
 
     ### Query（チャット試験）
     # curl -X POST http://weconnect.srv.wegrow:8000/chat \
-    curl -X POST http://172.16.30.70:8000/chat \
+    curl -X POST http://192.168.3.70:8000/chat \
     -H "Authorization: Bearer demo-user-token" \
     -H "X-User-Id: demo-user" \
     -H "X-Tenant-Id: default" \
@@ -137,10 +137,10 @@ uv run python -m uvicorn mcp_server.server:app --host 0.0.0.0 --port 9000 --relo
         CREATE DATABASE systemdb;
 
     # 2. 構造を流す
-    psql -U noah systemdb < db/system_schema.sql
+    psql -U noah systemdb < db/systemdb_schema.sql
 
     # 3. 初期データを流す
-    psql -U noah systemdb < db/system_seed.sql
+    psql -U noah systemdb < db/systemdb_seed.sql
 
 ### RAG DB 再作成
     # 1. DBを再作成
@@ -176,10 +176,10 @@ uv run python -m uvicorn mcp_server.server:app --host 0.0.0.0 --port 9000 --relo
         CREATE DATABASE logdb;
 
     # 2. 構造を流す
-    psql -U noah logdb < db/system_schema.sql
+    psql -U noah logdb < db/logdb_schema.sql
 
     # 3. 初期データを流す
-    psql -U noah logdb < db/system_seed.sql
+    psql -U noah logdb < db/logdb_seed.sql
 
 ### 設計上の考慮すべきポイント
     ⚠️ ① MCP protocol versioning
